@@ -10,12 +10,12 @@ import android.util.Log;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 
 /**
  * OnGlobalLayoutListener 获取控件宽高
- *
  */
 public class EnhancedImageView extends ImageView
         implements ViewTreeObserver.OnGlobalLayoutListener
@@ -40,7 +40,16 @@ public class EnhancedImageView extends ImageView
     /****************************自由移动***************/
     //记录手指数量
     private int mLastPointerCount;
-
+    //记录上次手指触摸位置
+    private float mLastX;
+    private float mLastY;
+    //触摸移动距离
+    private int mTouchSlop;
+    //是否可以拖动
+    private boolean isCanDrag;
+    //边界检查时用
+    private boolean isCheckLeftAndRight;
+    private boolean isCheckTopAndBottom;
 
     public EnhancedImageView(Context context) {
         this(context, null);
@@ -57,6 +66,8 @@ public class EnhancedImageView extends ImageView
         super.setScaleType(ScaleType.MATRIX);
         mScaleGestureDetector = new ScaleGestureDetector(context, this);
         setOnTouchListener(this);
+        //获取系统默认缩放
+        mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
     }
 
     @Override
@@ -161,7 +172,7 @@ public class EnhancedImageView extends ImageView
             log("设置最终缩放值 " + scaleFactor);
             mScaleMatrix.postScale(scaleFactor, scaleFactor, detector.getFocusX(), detector.getFocusY());
 
-            checkBorderAndCenter();
+            checkBorderForScale();
 
             setImageMatrix(mScaleMatrix);
         }
@@ -192,7 +203,7 @@ public class EnhancedImageView extends ImageView
     /**
      * 缩放时候进行边界控制等
      */
-    private void checkBorderAndCenter() {
+    private void checkBorderForScale() {
         RectF rect = getMatrixRectF();
 
         float deltaX = 0;
@@ -232,9 +243,38 @@ public class EnhancedImageView extends ImageView
         mScaleMatrix.postTranslate(deltaX, deltaY);
     }
 
+    /**
+     * 当移动时,进行边界检查.
+     */
+    private void checkBorderForTraslate() {
+        RectF rectF = getMatrixRectF();
+
+        float deltaX = 0;
+        float deltaY = 0;
+        int width = getWidth();
+        int height = getHeight();
+
+        //上边有空白,往上移动
+        if (rectF.top > 0 && isCheckTopAndBottom) {
+            deltaY = -rectF.top;
+        }
+
+        if (rectF.bottom < height && isCheckTopAndBottom) {
+            deltaY = height - rectF.bottom;
+        }
+        //左边和空白往左边移动
+        if (rectF.left > 0 && isCheckLeftAndRight) {
+            deltaX = -rectF.left;
+        }
+
+        if (rectF.right < width && isCheckLeftAndRight) {
+            deltaX = width - rectF.right;
+        }
+        mScaleMatrix.postTranslate(deltaX, deltaY);
+    }
+
     @Override
     public boolean onScaleBegin(ScaleGestureDetector detector) {
-
 
         return true;
     }
@@ -260,6 +300,82 @@ public class EnhancedImageView extends ImageView
     @Override
     public boolean onTouch(View v, MotionEvent event) {
         mScaleGestureDetector.onTouchEvent(event);
+        /**
+         * 计算多指触控中心点
+         */
+        float currentX = 0;
+        float currentY = 0;
+        int pointCount = event.getPointerCount();
+
+        for (int i = 0; i < pointCount; i++) {
+            currentX += event.getX(i);
+            currentY += event.getY(i);
+        }
+        currentX /= pointCount;
+        currentY /= pointCount;
+
+        if (mLastPointerCount != pointCount) {
+            isCanDrag = false;
+            mLastX = currentX;
+            mLastY = currentY;
+        }
+
+        mLastPointerCount = pointCount;
+
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_MOVE:
+                float dx = currentX - mLastX;
+                float dy = currentY - mLastY;
+
+                if (!isCanDrag) {
+                    isCanDrag = isMoveAction(dx, dy);
+                }
+
+                if (isCanDrag) {
+                    RectF rectf = getMatrixRectF();
+                    if (getDrawable() != null) {
+                        isCheckLeftAndRight = isCheckTopAndBottom = true;
+                        //如果宽度小于控件宽度,不允许横向移动
+                        if (rectf.width() < getWidth()) {
+                            dx = 0;
+                            isCheckLeftAndRight = false;
+                        }
+                        //若高度小于控件高度,不允许纵向移动
+                        if (rectf.height() < getHeight()) {
+                            dy = 0;
+                            isCheckTopAndBottom = false;
+                        }
+                        mScaleMatrix.postTranslate(dx, dy);
+                        checkBorderForTraslate();
+                        setImageMatrix(mScaleMatrix);
+                    }
+                }
+                mLastX = currentX;
+                mLastY = currentY;
+                break;
+            //结束时,将手指数量置0
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                mLastPointerCount = 0;
+                break;
+            default:
+                break;
+
+        }
+
+
         return true;
+    }
+
+
+    /**
+     * 判断当前移动距离是否大于系统默认最小移动距离
+     *
+     * @param dx
+     * @param dy
+     * @return
+     */
+    private boolean isMoveAction(float dx, float dy) {
+        return Math.sqrt(dx * dx + dy * dy) > mTouchSlop;
     }
 }
