@@ -2,6 +2,7 @@ package com.jerey.imageview;
 
 import android.content.Context;
 import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.support.annotation.Nullable;
 import android.util.AttributeSet;
@@ -13,15 +14,17 @@ import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 
 /**
- * Created by Xiamin on 2017/3/31.
+ * OnGlobalLayoutListener 获取控件宽高
+ *
  */
-
 public class EnhancedImageView extends ImageView
         implements ViewTreeObserver.OnGlobalLayoutListener
         , ScaleGestureDetector.OnScaleGestureListener
         , View.OnTouchListener {
     private static final String TAG = "EnhancedImageView";
     private static final boolean DEBUG = true;
+
+    //初始化标志
     private boolean mInitOnce = false;
     //初始化缩放值
     private float mInitScale;
@@ -33,6 +36,11 @@ public class EnhancedImageView extends ImageView
     private Matrix mScaleMatrix;
     //为缩放而生的类，捕获缩放比例
     private ScaleGestureDetector mScaleGestureDetector;
+
+    /****************************自由移动***************/
+    //记录手指数量
+    private int mLastPointerCount;
+
 
     public EnhancedImageView(Context context) {
         this(context, null);
@@ -99,7 +107,7 @@ public class EnhancedImageView extends ImageView
             }
             mInitScale = scale;
             mMidScale = scale * 2;
-            mMaxScale = scale * 4;
+            mMaxScale = scale * 5;
 
             //计算将图片移动至中间距离
             int dx = getWidth() / 2 - drawableWidth / 2;
@@ -151,11 +159,77 @@ public class EnhancedImageView extends ImageView
                 scaleFactor = mMaxScale / scale;
             }
             log("设置最终缩放值 " + scaleFactor);
-            mScaleMatrix.postScale(scaleFactor, scaleFactor, getWidth() / 2, getHeight() / 2);
+            mScaleMatrix.postScale(scaleFactor, scaleFactor, detector.getFocusX(), detector.getFocusY());
+
+            checkBorderAndCenter();
+
             setImageMatrix(mScaleMatrix);
         }
 
         return true;
+    }
+
+    /**
+     * 获得图片放大缩小以后的宽和高
+     *
+     * @return
+     */
+    private RectF getMatrixRectF() {
+        Matrix matrix = mScaleMatrix;
+        RectF rectF = new RectF();
+
+        Drawable drawable = getDrawable();
+
+        if (drawable != null) {
+            rectF.set(0, 0, drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight());
+            //用matrix进行map一下
+            matrix.mapRect(rectF);
+        }
+
+        return rectF;
+    }
+
+    /**
+     * 缩放时候进行边界控制等
+     */
+    private void checkBorderAndCenter() {
+        RectF rect = getMatrixRectF();
+
+        float deltaX = 0;
+        float deltaY = 0;
+
+        int width = getWidth();
+        int height = getHeight();
+
+        if (rect.width() >= width) {
+            if (rect.left > 0) { //和屏幕左边有空隙
+                deltaX = -rect.left; //左边移动
+            }
+            // 和屏幕as
+            if (rect.right < width) {
+                deltaX = width - rect.right;
+            }
+        }
+
+        if (rect.height() >= height) {
+            if (rect.top > 0) {
+                deltaY = -rect.top;
+            }
+
+            if (rect.bottom < height) {
+                deltaY = height - rect.bottom;
+            }
+        }
+
+        //如果宽度或者高度小于控件的宽和高 居中处理
+        if (rect.width() < width) {
+            deltaX = getWidth() / 2 - rect.right + rect.width() / 2;
+        }
+
+        if (rect.height() < height) {
+            deltaY = getHeight() / 2 - rect.bottom + rect.height() / 2;
+        }
+        mScaleMatrix.postTranslate(deltaX, deltaY);
     }
 
     @Override
