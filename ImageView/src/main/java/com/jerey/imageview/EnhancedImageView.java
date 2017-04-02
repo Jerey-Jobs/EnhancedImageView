@@ -1,5 +1,6 @@
 package com.jerey.imageview;
 
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Matrix;
 import android.graphics.RectF;
@@ -7,6 +8,7 @@ import android.graphics.drawable.Drawable;
 import android.support.annotation.Nullable;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
@@ -28,6 +30,7 @@ public class EnhancedImageView extends ImageView
     private boolean mInitOnce = false;
     //初始化缩放值
     private float mInitScale;
+    private float mMinScale;
     //双击放大的值
     private float mMidScale;
     //放大最大值
@@ -51,6 +54,9 @@ public class EnhancedImageView extends ImageView
     private boolean isCheckLeftAndRight;
     private boolean isCheckTopAndBottom;
 
+    /*****************双击放大********************************/
+    private GestureDetector mGestureDetector;
+
     public EnhancedImageView(Context context) {
         this(context, null);
     }
@@ -68,6 +74,29 @@ public class EnhancedImageView extends ImageView
         setOnTouchListener(this);
         //获取系统默认缩放
         mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        mGestureDetector = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDoubleTap(MotionEvent e) {
+                float x = e.getX();
+                float y = e.getY();
+                log("当前scale " + getScale() + "mid: " + mMidScale);
+                if (getScale() < mMidScale) {
+                    mScaleMatrix.postScale(mMidScale/getScale(), mMidScale/getScale(),getWidth()/2,getHeight()/2);
+                    setImageMatrix(mScaleMatrix);
+                } else {
+                    log("恢复初始化");
+                    //计算将图片移动至中间距离
+                    int dx = getWidth() / 2 - getDrawable().getIntrinsicWidth() / 2;
+                    int dy = getHeight() / 2 - getDrawable().getIntrinsicHeight() / 2;
+                    mScaleMatrix.reset();
+                    mScaleMatrix.postTranslate(dx, dy);
+                    mScaleMatrix.postScale(mInitScale, mInitScale,getWidth()/2,getHeight()/2);
+                    setImageMatrix(mScaleMatrix);
+                }
+
+                return true;
+            }
+        });
     }
 
     @Override
@@ -117,6 +146,7 @@ public class EnhancedImageView extends ImageView
                 scale = Math.min(width * 1.0f / drawableWidth, height * 1.0f / drawableHeight);
             }
             mInitScale = scale;
+            mMinScale = scale;
             mMidScale = scale * 2;
             mMaxScale = scale * 5;
 
@@ -161,9 +191,9 @@ public class EnhancedImageView extends ImageView
         }
 
         //缩放范围的控制, 放大时需要小于最大，缩小时需要大于最小
-        if ((scale < mMaxScale && scaleFactor > 1.0f) || (scale > mInitScale && scaleFactor < 1.0f)) {
-            if (scale * scaleFactor < mInitScale) {
-                scaleFactor = mInitScale / scale;
+        if ((scale < mMaxScale && scaleFactor > 1.0f) || (scale > mMinScale && scaleFactor < 1.0f)) {
+            if (scale * scaleFactor < mMinScale) {
+                scaleFactor = mMinScale / scale;
             }
 
             if (scale * scaleFactor > mMaxScale) {
@@ -299,6 +329,9 @@ public class EnhancedImageView extends ImageView
      */
     @Override
     public boolean onTouch(View v, MotionEvent event) {
+        if (mGestureDetector.onTouchEvent(event)) {
+            return true;
+        }
         mScaleGestureDetector.onTouchEvent(event);
         /**
          * 计算多指触控中心点
@@ -321,9 +354,21 @@ public class EnhancedImageView extends ImageView
         }
 
         mLastPointerCount = pointCount;
-
+        RectF rectF = getMatrixRectF();
         switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                //请求不被拦截
+                if(rectF.width() > getWidth() || rectF.height() > getHeight()){
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                }
+
+                break;
+
             case MotionEvent.ACTION_MOVE:
+                if(rectF.width() > (getWidth() + 0.01) || rectF.height() > (getHeight() + 0.01)){
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                }
+
                 float dx = currentX - mLastX;
                 float dy = currentY - mLastY;
 
@@ -378,4 +423,47 @@ public class EnhancedImageView extends ImageView
     private boolean isMoveAction(float dx, float dy) {
         return Math.sqrt(dx * dx + dy * dy) > mTouchSlop;
     }
+
+    private void resetToInit(){
+        //得到控件的宽和高
+        int width = getWidth();
+        int height = getHeight();
+
+        //拿到图片的宽高
+        Drawable drawable = getDrawable();
+        if (drawable == null) {
+            return;
+        }
+        int drawableWidth = drawable.getIntrinsicWidth();
+        int drawableHeight = drawable.getIntrinsicHeight();
+
+        float scale = 1.0f;
+        //若图片宽度大于控件宽度 高度小于空间高度
+        if (drawableWidth > width && drawableHeight < height) {
+            log("若图片宽度大于控件宽度 高度小于空间高度");
+            scale = width * 1.0f / drawableWidth;
+            //图片的高度大于控件高度 宽度小于控件宽度
+        } else if (drawableHeight > height && drawableWidth < width) {
+            log("图片的高度大于控件高度 宽度小于控件宽度");
+            scale = height * 1.0f / drawableHeight;
+        } else if (drawableWidth > width && drawableHeight > height) {
+            log("都大于");
+            scale = Math.min(width * 1.0f / drawableWidth, height * 1.0f / drawableHeight);
+        } else if (drawableWidth < width && drawableHeight < height) {
+            log("都小于");
+            scale = Math.min(width * 1.0f / drawableWidth, height * 1.0f / drawableHeight);
+        }
+        mInitScale = scale;
+        mMidScale = scale * 2;
+        mMaxScale = scale * 5;
+
+        //计算将图片移动至中间距离
+        int dx = getWidth() / 2 - drawableWidth / 2;
+        int dy = getHeight() / 2 - drawableHeight / 2;
+
+        mScaleMatrix.postTranslate(dx, dy);
+
+        ValueAnimator valueAnimator = new ValueAnimator();
+    }
+
 }
